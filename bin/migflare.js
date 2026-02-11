@@ -10,10 +10,16 @@ function usage() {
 Options:
   --zone-id <id>                 Cloudflare zone ID (skip zone lookup)
   --token <token>                Cloudflare API token (default: CLOUDFLARE_API_TOKEN)
+  --migadu-user <email>          Migadu login email (default: MIGADU_USER)
+  --migadu-token <token>         Migadu API token (default: MIGADU_API_TOKEN)
+  --verification-value <value>   Manual Migadu verification TXT value
+  --verification-name <name>     Verification TXT name/host (default: @)
   --dry-run                      Show what would change without writing
   --no-core                      Skip core apex MX + SPF records
   --no-dmarc                     Skip DMARC TXT record
-  --no-subdomain-addressing      Skip wildcard MX records for subdomain addressing
+  --no-verification              Skip Migadu verification TXT record
+  --subdomain-addressing         Include wildcard MX records for subdomain addressing
+  --no-subdomain-addressing      Do not include wildcard MX records (default)
   --no-autoconfig                Skip autoconfig/autodiscovery SRV + CNAME records
   -h, --help                     Show this help
 `);
@@ -23,7 +29,8 @@ function parseArgs(argv) {
   const options = {
     includeCore: true,
     includeDmarc: true,
-    includeSubdomainAddressing: true,
+    includeVerification: true,
+    includeSubdomainAddressing: false,
     includeAutoconfig: true,
     dryRun: false,
   };
@@ -52,6 +59,16 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (arg === "--no-verification") {
+      options.includeVerification = false;
+      continue;
+    }
+
+    if (arg === "--subdomain-addressing") {
+      options.includeSubdomainAddressing = true;
+      continue;
+    }
+
     if (arg === "--no-subdomain-addressing") {
       options.includeSubdomainAddressing = false;
       continue;
@@ -76,6 +93,42 @@ function parseArgs(argv) {
         throw new Error("Missing value for --token");
       }
       options.token = argv[i + 1];
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--migadu-user") {
+      if (!argv[i + 1] || argv[i + 1].startsWith("-")) {
+        throw new Error("Missing value for --migadu-user");
+      }
+      options.migaduUser = argv[i + 1];
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--migadu-token") {
+      if (!argv[i + 1] || argv[i + 1].startsWith("-")) {
+        throw new Error("Missing value for --migadu-token");
+      }
+      options.migaduToken = argv[i + 1];
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--verification-value") {
+      if (!argv[i + 1] || argv[i + 1].startsWith("-")) {
+        throw new Error("Missing value for --verification-value");
+      }
+      options.verificationValue = argv[i + 1];
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--verification-name") {
+      if (!argv[i + 1] || argv[i + 1].startsWith("-")) {
+        throw new Error("Missing value for --verification-name");
+      }
+      options.verificationName = argv[i + 1];
       i += 1;
       continue;
     }
@@ -224,6 +277,14 @@ async function main() {
     throw new Error("Resolved token is invalid. Pass --token explicitly or set CLOUDFLARE_API_TOKEN.");
   }
 
+  const resolvedMigaduUser = cleanCandidate(options.migaduUser || process.env.MIGADU_USER);
+  const resolvedMigaduToken = cleanCandidate(options.migaduToken || process.env.MIGADU_API_TOKEN);
+  const resolvedVerificationValue = cleanCandidate(options.verificationValue || process.env.MIGADU_VERIFICATION_VALUE);
+  const resolvedVerificationName = cleanCandidate(options.verificationName || process.env.MIGADU_VERIFICATION_NAME || "@");
+  if ((resolvedMigaduUser && !resolvedMigaduToken) || (!resolvedMigaduUser && resolvedMigaduToken)) {
+    throw new Error("Set both MIGADU_USER and MIGADU_API_TOKEN, or pass both --migadu-user and --migadu-token.");
+  }
+
   const result = await configureMigaduDns({
     domain,
     token: resolvedToken,
@@ -231,8 +292,13 @@ async function main() {
     dryRun: options.dryRun,
     includeCore: options.includeCore,
     includeDmarc: options.includeDmarc,
+    includeVerification: options.includeVerification,
     includeSubdomainAddressing: options.includeSubdomainAddressing,
     includeAutoconfig: options.includeAutoconfig,
+    verificationValue: resolvedVerificationValue,
+    verificationName: resolvedVerificationName,
+    migaduUser: resolvedMigaduUser,
+    migaduToken: resolvedMigaduToken,
   });
 
   summarize(result);
